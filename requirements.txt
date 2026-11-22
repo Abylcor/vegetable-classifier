@@ -1,0 +1,6 @@
+# predict.py dependencies: runs on CPU, internet is needed only to install.
+# Install with one command:  pip install -r requirements.txt
+# Tested in a clean environment: Python 3.13, torch 2.15.0, torchvision 0.29.2, Pillow 13.0.0.
+torch>=2.1
+torchvision>=0.16
+pillow>=9.1

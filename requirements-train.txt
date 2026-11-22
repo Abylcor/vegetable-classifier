@@ -1,0 +1,7 @@
+# Everything for data analysis and training (most of it is preinstalled on Kaggle).
+# Install:  pip install -r requirements-train.txt
+-r requirements.txt
+numpy>=1.23
+scikit-learn>=1.8   # make_splits.py: before 1.8 StratifiedGroupKFold(shuffle=True) mixes up groups
+pandas>=2.0
+matplotlib>=3.7
