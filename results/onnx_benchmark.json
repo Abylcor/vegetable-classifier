@@ -1,0 +1,37 @@
+{
+ "cpu": "Intel(R) Xeon(R) Processor @ 2.30GHz",
+ "threads": 2,
+ "os": "Linux-6.18.44-fc-v819-x86_64-with-glibc2.39",
+ "python": "3.13.18",
+ "torch": "2.15.0+cu132",
+ "onnxruntime": "1.32.0",
+ "export": "torch.export (dynamo=True)",
+ "opset": 20,
+ "size_mb": {
+  "pt": 15.6,
+  "onnx": 15.8
+ },
+ "check_random": {
+  "batch": 8,
+  "same_label": 8,
+  "rel_logit_diff": 0.0009967488003894687,
+  "max_prob_diff": 2.7120113372802734e-05
+ },
+ "check_images": {
+  "photos": 344,
+  "unreadable": 0,
+  "same_label": 344,
+  "max_prob_diff": 2.0265579223632812e-06
+ },
+ "ms_per_photo": {
+  "1": {
+   "pytorch_ms": 25.32,
+   "onnx_ms": 7.63
+  },
+  "16": {
+   "pytorch_ms": 15.39,
+   "onnx_ms": 7.54
+  }
+ },
+ "note": "только сеть, без чтения и предобработки; медиана по повторам после прогрева"
+}
