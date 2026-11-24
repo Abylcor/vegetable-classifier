@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+
 """
 train.py - дообучение предобученной сети (transfer learning) по таблице разбиения.
 
