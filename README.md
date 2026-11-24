@@ -67,12 +67,11 @@ python predict.py --input путь/к/папке --output preds.csv
 Дайкона там не нашлось — вместо него на экзамен пришла зелёная редька, а Squash я снял кабачком, как в ТЗ.
 Дайкон и чайот, которые лежат в датасете, пришлось взять из интернета.
 
-Фото лежат в релизе [photos-v1](https://github.com/Abylcor/vegetable-classifier/releases/tag/photos-v1):
-архив [veg_test.zip](https://github.com/Abylcor/vegetable-classifier/releases/download/photos-v1/veg_test.zip) (113 МБ).
-В нём `my_photos/` — 37 фото из Magnum в исходном виде (HEIC), `web_photos/` — 19 картинок из интернета,
-`labels.csv` — что на каждом фото, а для картинок с Wikimedia ещё автор и лицензия.
+Фото лежат в папке [`veg_test/`](veg_test) (113 МБ): `my_photos/` — 37 фото из Magnum в исходном виде
+(HEIC), `web_photos/` — 19 картинок из интернета, `labels.csv` — что на каждом фото, а для картинок
+с Wikimedia ещё автор и лицензия.
 
-Распакуйте архив в папку `veg_test` рядом с `predict.py` и запустите:
+Из папки с кодом запустите:
 
 ```bash
 pip install pillow-heif
@@ -185,9 +184,7 @@ ONNX Runtime и PyTorch и замеряет скорость обоих на о�
 | `results/` | Out-of-fold ответы, таблица порогов, замер ONNX, картинки Grad-CAM |
 | `weights/model.pt`, `weights/model.onnx` | Веса готовой модели для PyTorch и для ONNX Runtime |
 | `requirements.txt`, `requirements-train.txt`, `requirements-onnx.txt` | Библиотеки для `predict.py`, для обучения и для ONNX |
-
-Фото для проверки на своих снимках лежат не в репозитории, а в релизе
-[photos-v1](https://github.com/Abylcor/vegetable-classifier/releases/tag/photos-v1) (`veg_test.zip`).
+| `veg_test/` | Мои 37 фото из Magnum (HEIC) и 19 картинок из интернета для проверки на своих снимках |
 
 ## Как повторить всё с нуля
 
