@@ -1,0 +1,36 @@
+﻿Проверка модели на своих фото
+
+В архиве:
+  my_photos\          - ваши 37 фото из магазина в исходном виде (HEIC, как сняты на телефон).
+                        Файлы не перекодированы, только разложены по папкам классов,
+                        а к имени добавлен сорт: zucchini_IMG_6829.HEIC
+  web_photos\         - картинки из интернета (19 шт.): ваши 4 в исходном виде
+                        и 15 с Wikimedia Commons (имена начинаются с wiki_)
+  labels.csv          - какое фото в какую папку попало, что на нём (сорт),
+                        а для фото с Wikimedia - автор, лицензия и ссылка
+  check_my_photos.py  - сверяет ответы модели с папками
+
+1. Удалите старую папку veg_test, если она осталась от прошлого архива.
+   Иначе в my_photos окажутся и старые JPG, и HEIC, и каждое фото посчитается дважды.
+
+2. Положите veg_test.zip в папку с кодом (там, где predict.py и weights\model.pt)
+   и распакуйте: правой кнопкой -> "Извлечь всё" -> "Извлечь". Появится папка veg_test.
+
+3. Откройте PowerShell в папке с кодом: в проводнике щёлкните по адресной строке,
+   напишите powershell и нажмите Enter. Один раз поставьте библиотеки:
+   pip install -r requirements.txt
+   pip install pillow-heif
+   Без pillow-heif фото HEIC не читаются: все получат ответ unknown.
+
+4. Свои фото:
+   python predict.py --input veg_test\my_photos --output veg_test\my_preds.csv
+   python veg_test\check_my_photos.py veg_test\my_preds.csv
+
+5. Фото из интернета:
+   python predict.py --input veg_test\web_photos --output veg_test\web_preds.csv
+   python veg_test\check_my_photos.py veg_test\web_preds.csv
+
+6. Любая другая папка с фото:
+   python predict.py --input путь\к\папке --output preds.csv
+   Ответы будут в preds.csv. check_my_photos.py нужен, только если фото
+   разложены по папкам с именами классов.
