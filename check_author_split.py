@@ -1,17 +1,6 @@
 """Можно ли доверять авторскому разбиению final_dataset/ (train / val / test)?
 
-Скрипт не читает картинки: он сравнивает «отпечатки» файлов из inventory.csv,
-который строит audit_dataset.py:
-  * md5    - отпечаток байтов: совпадает только у одинаковых файлов;
-  * pHash  - 64-битный отпечаток картинки; nn_other_split_dist - расстояние (число
-             несовпавших бит, с учётом 8 поворотов и отражений) до ближайшей картинки
-             из другой части того же разбиения. До 8 бит - почти-дубликат.
-Источник снимка берётся из имени файла: 20251113_210729_frame_N.jpg - кадр видео
-20251113_210729, 20251113_210958.jpg - отдельное фото.
-
-Запуск:
-    python audit_dataset.py --data путь/к/data_raw --out audit_out
-    python check_author_split.py --inventory audit_out/inventory.csv
+python check_author_split.py --inventory audit_out/inventory.csv
 """
 import argparse
 import re

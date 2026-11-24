@@ -1,23 +1,6 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-choose_threshold.py - подбор порога уверенности для ответа unknown.
+"""Подбор порога unknown на out-of-fold ответах: минимум цены error_cost * ошибки + unknown.
 
-  python choose_threshold.py                          # по results/oof_preds.csv
-  python choose_threshold.py --error-cost 10          # если ошибка в 10 раз дороже unknown
-
-Идея: если уверенность модели (вероятность выбранного класса) ниже порога, predict.py
-отвечает unknown, и фото уходит человеку. Чем выше порог, тем меньше ошибок,
-но тем больше правильных ответов тоже становятся unknown.
-
-Порог выбираем на out-of-fold ответах (results/oof_preds.csv): каждое из 3 879 фото датасета
-предсказала модель, которая не видела его видео. Ни закрытый тест, ни свои фото
-в выборе не участвуют, свои фото - только для проверки.
-
-Правило: ошибка стоит error_cost (по умолчанию 5), unknown стоит 1, верный ответ 0.
-Берём порог с минимальной суммарной ценой 5 * ошибки + unknown. Соотношение 5:1
-взято из ТЗ: в бонусе трека B ответ «овощ есть», когда его нет, стоит магазину
-в 5 раз дороже ложной тревоги. Шаг сетки 0,05: точнее подбирать по этим данным нет смысла.
+python choose_threshold.py [--error-cost 5]
 """
 import argparse
 import csv
@@ -60,12 +43,12 @@ def best_threshold(rows, error_cost, grid):
 
 
 def auroc(rows):
-    """Насколько уверенность отделяет верные ответы от ошибок: 0,5 - никак, 1 - идеально."""
+    """0,5 - уверенность не отделяет ошибки от верных ответов, 1 - отделяет идеально."""
     ranked = sorted(rows, key=lambda r: r["confidence"])
     pos = sum(r["label"] == r["pred"] for r in rows)
     neg = len(rows) - pos
     rank_sum, i = 0.0, 0
-    while i < len(ranked):                  # средние ранги для одинаковых значений
+    while i < len(ranked):  # средние ранги для одинаковых значений
         j = i
         while j < len(ranked) and ranked[j]["confidence"] == ranked[i]["confidence"]:
             j += 1
@@ -102,7 +85,7 @@ def main():
     for k in (2, 3, 5, 10):
         print(f"  в {k:>2} раз -> порог {best_threshold(rows, k, grid):.2f}")
 
-    if Path(args.splits).is_file():         # устойчивость: тот же выбор отдельно на каждом фолде
+    if Path(args.splits).is_file():  # тот же выбор отдельно на каждом фолде
         with open(args.splits, encoding="utf-8") as f:
             fold = {r["path"]: r["fold"] for r in csv.DictReader(f)}
         for k in sorted({fold.get(r["path"]) for r in rows} - {None}):

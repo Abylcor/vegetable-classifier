@@ -1,25 +1,6 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-make_splits.py - честное разбиение датасета овощей на фолды по группам (видео).
+"""Разбиение на фолды по видео (StratifiedGroupKFold, нужен scikit-learn >= 1.8).
 
-Почему так (по результатам audit_dataset.py):
-  * 3694 из 3879 фото - кадры 19 видео (имя YYYYMMDD_HHMMSS_frame_N.jpg), соседние кадры
-    почти одинаковые. Если кадры одного видео попадут и в train, и в test, тест
-    проверяет запоминание, а не обобщение. Поэтому единица разбиения - видео.
-  * Остальные 185 - фото (YYYYMMDD_HHMMSS.jpg), обычно снятые в ту же минуту, что и видео
-    (та же сцена). Фото присоединяем к ближайшему по времени видео того же класса,
-    если разница <= --photo-gap секунд, иначе фото образуют группу "класс + день".
-  * final_dataset/ не используем: это копии тех же файлов, разложенные с пересечениями.
-
-Фолды строит StratifiedGroupKFold (нужен scikit-learn >= 1.8, в старых версиях ошибка
-в перемешивании групп): группа целиком в одном фолде, пропорции классов по фолдам
-примерно равны. Готовое разбиение зафиксировано в splits.csv. Обучение на фолдах != k, проверка на фолде k; метрики
-считаем по предсказаниям out-of-fold (каждое фото предсказано моделью, не видевшей его видео).
-
-Запуск:
-  python make_splits.py --data путь/к/data_raw --out splits.csv
-  python make_splits.py --data путь/к/data_raw --out splits.csv --pairs audit_out/near_dup_pairs.csv
+python make_splits.py --data путь/к/data_raw --out splits.csv
 """
 import argparse
 import csv
@@ -35,7 +16,6 @@ IMG_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 
 def find_images(data_dir):
-    """Все изображения в папках классов, кроме всего, что лежит внутри final_dataset."""
     items = []
     for p in sorted(data_dir.rglob("*")):
         if not p.is_file() or p.suffix.lower() not in IMG_EXT:
@@ -50,7 +30,7 @@ def find_images(data_dir):
 
 
 def assign_groups(items, photo_gap):
-    videos = defaultdict(dict)                       # label -> {video_id: datetime}
+    videos = defaultdict(dict)  # label -> {video_id: datetime}
     for it in items:
         m = NAME_RE.match(it["filename"])
         it["ts"] = datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S") if m else None
@@ -65,7 +45,7 @@ def assign_groups(items, photo_gap):
             gap, vid = min(cand) if cand else (float("inf"), None)
             it["group"] = (f"{it['label']}/video_{vid}" if gap <= photo_gap
                            else f"{it['label']}/photos_{it['ts']:%Y%m%d}")
-        elif it["kind"] == "other":                  # имя не по шаблону: отдельная группа
+        elif it["kind"] == "other":  # имя не по шаблону: отдельная группа
             it["group"] = f"{it['label']}/file_{it['filename']}"
     return items
 
@@ -76,9 +56,6 @@ def assign_folds(items, n_folds, seed):
         from sklearn.model_selection import StratifiedGroupKFold
     except ImportError:
         sys.exit('Нужен scikit-learn:  python -m pip install "scikit-learn>=1.8"')
-    # До 1.8 StratifiedGroupKFold(shuffle=True) перемешивал строки таблицы "группа x класс", но не
-    # пересчитывал номера групп: подобранное распределение доставалось не тем группам. На Kaggle
-    # (старая версия) из-за этого Cucumber целиком попадал в один фолд, Potato - в другой.
     version = tuple(int(x) for x in re.findall(r"\d+", sklearn.__version__)[:2])
     if version < (1, 8):
         sys.exit(f"scikit-learn {sklearn.__version__} слишком старый: до версии 1.8 StratifiedGroupKFold "
@@ -116,7 +93,7 @@ def report(items, n_folds):
 
 
 def check_pairs(items, pairs_csv, max_dist):
-    """Независимая проверка по pHash из аудита: нет ли почти-дубликатов в разных фолдах."""
+    """Проверка по pHash: нет ли почти-дубликатов в разных фолдах."""
     fold_of = {f"{it['label']}/{it['filename']}": it["fold"] for it in items}
     key = lambda rel: "/".join(rel.split("/")[-2:])
     crossing, total = Counter(), 0

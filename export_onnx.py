@@ -1,20 +1,6 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-export_onnx.py - экспорт модели в ONNX, проверка совпадения ответов и сравнение скорости на CPU.
+"""Экспорт модели в ONNX, сверка ответов с PyTorch и замер скорости на CPU.
 
-  pip install -r requirements-onnx.txt
-  python export_onnx.py                              # weights/model.pt -> weights/model.onnx
-  python export_onnx.py --check-dir папка/с/фото     # сверить ответы ещё и на этих фото
-
-Что делает:
-  1. Загружает weights/model.pt так же, как predict.py, и сохраняет сеть в ONNX
-     с переменным размером пачки. В файл записываются классы и параметры предобработки:
-     predict.py --onnx проверяет, что классы совпадают.
-  2. Сверяет ONNX Runtime с PyTorch: на случайных тензорах и на настоящих фото (--check-dir).
-  3. Замеряет время сети на CPU: одинаковое число потоков, пачка 1 и 16, прогрев,
-     медиана по повторам. Предобработка в замер не входит: она одинаковая у обоих.
-     Таблица печатается в консоль и пишется в results/onnx_benchmark.json.
+python export_onnx.py [--check-dir папка/с/фото]
 """
 import argparse
 import json
@@ -61,7 +47,6 @@ def cpu_name():
 
 
 def export(model, path):
-    """Новый экспортёр (torch.export) с переменной пачкой; если его нет - старый (TorchScript)."""
     x = torch.randn(2, 3, IMG_SIZE, IMG_SIZE)
     names = dict(input_names=["image"], output_names=["logits"])
     try:
@@ -106,7 +91,6 @@ def softmax(z):
 
 
 def compare(model, sess, x):
-    """Логиты и вероятности обоих движков на одной пачке."""
     with torch.inference_mode():
         a = model(x).numpy()
     b = sess.run(None, {sess.get_inputs()[0].name: x.numpy()})[0]
@@ -163,7 +147,7 @@ def main():
     sess = session(out, args.threads)
     x = torch.randn(8, 3, IMG_SIZE, IMG_SIZE, generator=torch.Generator().manual_seed(0))
     a, b = compare(model, sess, x)
-    # на шуме логиты огромные (десятки), поэтому сравниваем относительную разницу
+    # на шуме логиты большие, поэтому разница относительная
     random_check = {"batch": 8, "same_label": int((a.argmax(1) == b.argmax(1)).sum()),
                     "rel_logit_diff": float(np.abs(a - b).max() / np.abs(a).max()),
                     "max_prob_diff": float(np.abs(softmax(a) - softmax(b)).max())}
@@ -181,7 +165,7 @@ def main():
         xn = xb.numpy()
         runs = args.runs if b == 1 else max(10, args.runs // 8)
         t_torch, t_onnx = [], []
-        for _ in range(args.rounds):          # по очереди, чтобы фоновая нагрузка влияла на обоих одинаково
+        for _ in range(args.rounds):  # по очереди: фоновая нагрузка влияет на оба движка одинаково
             with torch.inference_mode():
                 t_torch.append(timed(lambda: model(xb), runs))
             t_onnx.append(timed(lambda: sess.run(None, {name: xn}), runs))
