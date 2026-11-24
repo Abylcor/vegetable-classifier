@@ -1,0 +1,8 @@
+# ONNX bonus: export_onnx.py (export + check + speed) and predict.py --onnx.
+# Install:  pip install -r requirements-onnx.txt
+# For predict.py --onnx alone, onnxruntime is enough.
+# Tested: onnx 1.23.2, onnxscript 0.7.2, onnxruntime 1.32.0 (Python 3.13, torch 2.15.0).
+-r requirements.txt
+onnx>=1.16
+onnxscript>=0.1
+onnxruntime>=1.17
