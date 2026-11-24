@@ -1,20 +1,6 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-gradcam.py - Grad-CAM: на какую часть картинки смотрит модель, когда принимает решение.
+"""Grad-CAM: куда смотрит модель. Пример разбирает модель фолда, не видевшая его видео.
 
-Берём предсказания на тестовых фолдах (runs/fold0, runs/fold1) и для каждого примера
-используем ту модель, которая НЕ видела его видео (модель своего фолда). Выбираем:
-  * самые уверенные ошибки (не больше --per-group из одного видео, чтобы примеры были разными);
-  * по одному правильному примеру каждого класса с типичной (медианной) уверенностью.
-Для ошибок рисуем две карты: за предсказанный класс и за правильный.
-
-Как работает Grad-CAM: берём выход последнего свёрточного слоя (1280 карт 7x7 у EfficientNet-B0)
-и градиент оценки нужного класса по этим картам. Среднее градиента по карте = её важность для
-класса; взвешенная сумма карт, обрезанная снизу нулём (ReLU), и есть тепловая карта.
-
-Запуск (Kaggle):
-  python gradcam.py --data /kaggle/input --runs runs --out runs/gradcam
+python gradcam.py --data /kaggle/input --runs runs --out runs/gradcam
 """
 import argparse
 import csv
@@ -22,13 +8,13 @@ from pathlib import Path
 
 import matplotlib
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
-import torch  # noqa: E402
-import torch.nn.functional as F  # noqa: E402
-from torchvision import transforms as T  # noqa: E402
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+import torch.nn.functional as F
+from torchvision import transforms as T
 
-from common import (CLASSES, IMG_SIZE, RESIZE, build_file_index, build_model, eval_transform,  # noqa: E402
+from common import (CLASSES, IMG_SIZE, RESIZE, build_file_index, build_model, eval_transform,
                     gradcam_layer, load_image)
 
 
@@ -49,8 +35,8 @@ class GradCAM:
         self.model.zero_grad(set_to_none=True)
         logits = self.model(x)
         logits[0, class_idx].backward()
-        weights = self.grads.mean(dim=(2, 3), keepdim=True)              # важность каждой карты
-        cam = F.relu((weights * self.acts).sum(dim=1, keepdim=True))     # взвешенная сумма
+        weights = self.grads.mean(dim=(2, 3), keepdim=True)  # важность каждой карты
+        cam = F.relu((weights * self.acts).sum(dim=1, keepdim=True))  # взвешенная сумма
         cam = F.interpolate(cam, size=x.shape[-2:], mode="bilinear", align_corners=False)[0, 0]
         cam = cam / (cam.max() + 1e-8)
         return cam.detach().cpu().numpy(), torch.softmax(logits, dim=1)[0].detach().cpu().numpy()
@@ -112,7 +98,7 @@ def main():
             p = index[f"{r['label']}/{Path(r['path']).name}"]
         r["file"] = p
 
-    show = T.Compose([T.Resize(RESIZE), T.CenterCrop(IMG_SIZE)])   # то, что видит сеть, без нормализации
+    show = T.Compose([T.Resize(RESIZE), T.CenterCrop(IMG_SIZE)])  # то, что видит сеть, без нормализации
     to_input = eval_transform()
     models, cams = {}, {}
     n = len(examples)
@@ -150,7 +136,7 @@ def main():
                     "error": int(is_error)})
     fig.suptitle("Grad-CAM: red = error, green = correct (model of the fold that did not see this video)",
                  fontsize=10)
-    fig.tight_layout(rect=(0, 0, 1, 1 - 0.5 / (3.1 * n)))   # место под общий заголовок
+    fig.tight_layout(rect=(0, 0, 1, 1 - 0.5 / (3.1 * n)))
     fig.savefig(out / "gradcam_grid.png", dpi=80)
     with open(out / "examples.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(log[0].keys()))

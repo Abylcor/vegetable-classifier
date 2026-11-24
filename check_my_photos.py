@@ -1,14 +1,6 @@
-"""Сверяет ответы predict.py с папками, по которым вы разложили свои фото.
+"""Сверяет ответы predict.py с папками классов, по которым разложены свои фото.
 
-Разложите фото по папкам с именами классов: Capsicum, Carrot, Cucumber, Potato, Raddish, Squash.
-Фото в любой другой папке (например, other/) считаются «не из шести классов»: для них правильный
-ответ - unknown, и скрипт покажет, что ответила модель и насколько она уверена.
-
-    python predict.py --input my_photos --output my_preds.csv
-    python check_my_photos.py my_preds.csv
-
-unknown на фото из шести классов - не ошибка, а отказ отвечать: такое фото уходит человеку.
-Поэтому скрипт считает отдельно верные ответы, ошибки и unknown.
+python check_my_photos.py my_preds.csv
 """
 import csv
 import sys

@@ -1,24 +1,6 @@
+"""Дообучение EfficientNet-B0 по таблице разбиения: сначала голова, потом вся сеть.
 
-"""
-train.py - дообучение предобученной сети (transfer learning) по таблице разбиения.
-
-Примеры (Kaggle, GPU):
-  python train.py --data /kaggle/input --splits splits.csv --test-fold 0 --out runs/fold0
-  python train.py --data /kaggle/input --splits splits.csv --test-fold 1 --out runs/fold1
-  python train.py --data /kaggle/input --splits splits.csv --test-fold none --out runs/final
-  python train.py --data /kaggle/input --splits author_split.csv --train-folds train --test-fold test --out runs/author
-
-Схема обучения (одинаковая для всех запусков, выбрана заранее, на тестовом фолде не подбирается):
-  1) "голова": веса ImageNet заморожены, учим только новый классификатор (--epochs-head эпох);
-  2) "вся сеть": размораживаем всё и дообучаем с маленьким LR и косинусным затуханием (--epochs-full эпох).
-Отдельной валидации и early stopping нет: у Cucumber, Potato и Raddish всего по 2 видео,
-"чистую" валидацию из новых видео взять неоткуда, а подбирать эпоху по тестовому фолду - утечка.
-
-В папку --out пишутся:
-  model.pt      веса + архитектура + классы (для predict.py)
-  log.csv       loss и accuracy на обучении по эпохам
-  preds.csv     предсказания на тестовом фолде с вероятностями всех классов
-  metrics.json  accuracy, macro-F1, precision/recall/F1 по классам, матрица ошибок
+python train.py --data /kaggle/input --splits splits.csv --test-fold 0 --out runs/fold0
 """
 import argparse
 import csv
@@ -63,7 +45,6 @@ def seed_worker(_):
 
 
 def read_split_rows(splits_csv, data_root):
-    """Читает таблицу разбиения и находит каждый файл на диске."""
     with open(splits_csv, encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     index, missing = None, []
@@ -83,8 +64,7 @@ def read_split_rows(splits_csv, data_root):
 
 
 def drop_unreadable(rows):
-    """Открываем каждый файл до обучения: один битый файл не должен ронять обучение посреди эпохи.
-    В нашем датасете таких нет (аудит открыл все файлы), но проверка дешёвая."""
+    """Битый файл не должен ронять обучение посреди эпохи."""
     good, bad = [], []
     for r in rows:
         try:
@@ -100,7 +80,6 @@ def drop_unreadable(rows):
 
 
 def limit_per_class(rows, n, seed):
-    """Для быстрых проверок кода: не больше n фото каждого класса."""
     rng = random.Random(seed)
     out = []
     for c in CLASSES:
@@ -112,7 +91,7 @@ def limit_per_class(rows, n, seed):
 
 def train_one_epoch(model, loader, criterion, optimizer, scheduler, device, frozen_bn=()):
     model.train()
-    for m in frozen_bn:          # замороженная часть: BatchNorm не обновляет статистики
+    for m in frozen_bn:  # замороженная часть: BatchNorm не обновляет статистики
         m.eval()
     total, correct, loss_sum = 0, 0, 0.0
     for x, y in loader:
@@ -138,17 +117,14 @@ def predict_probs(model, loader, device):
 
 
 def compute_metrics(y_true, y_pred, k):
-    """accuracy, precision/recall/F1 по каждому классу, macro-F1 и матрица ошибок.
-    macro-F1 = среднее F1 по классам без весов: маленький Raddish весит столько же,
-    сколько большой Squash, поэтому провал на редком классе не спрячется."""
-    cm = np.zeros((k, k), dtype=int)                 # строки - истинный класс, столбцы - предсказанный
+    cm = np.zeros((k, k), dtype=int)  # строки - истинный класс, столбцы - предсказанный
     for t, p in zip(y_true, y_pred):
         cm[t, p] += 1
     tp = np.diag(cm).astype(float)
     precision = np.divide(tp, cm.sum(0), out=np.zeros(k), where=cm.sum(0) > 0)
     recall = np.divide(tp, cm.sum(1), out=np.zeros(k), where=cm.sum(1) > 0)
     f1 = np.divide(2 * precision * recall, precision + recall, out=np.zeros(k), where=(precision + recall) > 0)
-    present = cm.sum(1) > 0                          # классы, которые есть в тесте
+    present = cm.sum(1) > 0
     return {
         "accuracy": float(tp.sum() / cm.sum()),
         "macro_f1": float(f1[present].mean()),
@@ -216,7 +192,7 @@ def main():
     t = time.time()
     train_rows, test_rows = drop_unreadable(train_rows), drop_unreadable(test_rows)
     print(f"Проверил {len(train_rows) + len(test_rows)} файлов за {time.time() - t:.0f} c")
-    # одна и та же группа (видео) в train и test = утечка; в нашем разбиении должно быть 0
+    # утечка: группа и в train, и в test (должно быть 0)
     shared = {r.get("group") for r in train_rows} & {r.get("group") for r in test_rows}
     print(f"Групп (видео/сцен) одновременно в train и test: {len(shared)}")
 
@@ -236,7 +212,7 @@ def main():
                               batch_size=args.batch, shuffle=True, drop_last=False, generator=g, **loader_kw)
 
     model = build_model(args.arch, pretrained=not args.no_pretrained).to(device)
-    # веса классов: редкие классы весят больше, иначе модели выгодно чаще говорить "Squash"
+    # веса классов: редкие классы весят больше
     w = torch.tensor([len(train_y) / (len(CLASSES) * counts[k]) for k in range(len(CLASSES))], dtype=torch.float32)
     criterion = nn.CrossEntropyLoss(weight=w.to(device), label_smoothing=args.label_smoothing)
 
@@ -248,7 +224,7 @@ def main():
         print(f"[{phase}] epoch {epoch}: train loss {loss:.4f}, train acc {acc:.4f}, lr {lr:.2e}, {sec:.0f} c",
               flush=True)
 
-    # Этап 1: учим только голову, остальная сеть заморожена
+    # этап 1: учим только голову
     head = head_module(model, args.arch)
     head_ids = {id(p) for p in head.parameters()}
     for p in model.parameters():
@@ -261,7 +237,7 @@ def main():
         loss, acc = train_one_epoch(model, train_loader, criterion, opt, None, device, frozen_bn)
         log("head", e, loss, acc, args.lr_head, time.time() - t)
 
-    # Этап 2: размораживаем всю сеть, маленький LR с косинусным затуханием
+    # этап 2: вся сеть, маленький LR с косинусным затуханием
     for p in model.parameters():
         p.requires_grad = True
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr_full, weight_decay=args.wd)

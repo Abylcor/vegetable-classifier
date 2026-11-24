@@ -1,27 +1,6 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-audit_dataset.py - аудит датасета изображений (без обучения моделей).
+"""Аудит датасета: копии, почти-дубликаты (pHash), признаки съёмки, контрольные листы.
 
-Скрипт только читает файлы и ничего не меняет в датасете. Результат: папка --out
-и архив <out>.zip на несколько МБ, который удобно отправить на проверку.
-
-Что считается:
-  inventory.csv      по строке на файл: корень/сплит/класс из пути, формат, размеры,
-                     EXIF, оценка качества JPEG, MD5, pHash (+7 вариантов для отражений
-                     и поворотов на 90/180/270), простые признаки съёмки (яркость,
-                     контраст, насыщенность, фон по краям кадра, резкость), ближайшие
-                     соседи по pHash (в своём корне, в другом сплите, в другом корне).
-  near_dup_pairs.csv пары почти-дубликатов внутри каждого корня (pHash-расстояние <= --pair-max-dist).
-  sheets/*.jpg       контрольные листы: случайные примеры по классам, пары на разных
-                     расстояниях (чтобы выбрать порог глазами), пары train/test,
-                     пары из разных классов, крупнейшие кластеры почти-дубликатов.
-  sheets_index.csv   какие файлы изображены на листах.
-  summary.txt/.json  сводка.
-
-Зависимости: Pillow, numpy.
-Запуск:
-  python audit_dataset.py --data путь/к/распакованному/датасету --out audit_out
+python audit_dataset.py --data путь/к/датасету --out audit_out
 """
 import argparse
 import csv
@@ -51,10 +30,10 @@ CLASS_ALIASES["radish"] = "Raddish"
 SPLIT_ALIASES = {"train": "train", "training": "train", "test": "test", "testing": "test",
                  "val": "val", "valid": "val", "validation": "val"}
 
-FEAT_SIDE = 256   # длинная сторона картинки, на которой считаются признаки съёмки
-HASH_SIDE = 32    # pHash: серая 32x32 -> DCT -> левый верхний блок 8x8 (как в imagehash.phash)
+FEAT_SIDE = 256
+HASH_SIDE = 32
 HASH_LOW = 8
-CHUNK = 1024      # сколько запросов за раз в матричном подсчёте расстояний
+CHUNK = 1024
 SEED = 42
 TRANSFORMS = ["same", "flip_lr", "flip_tb", "rot180", "transpose", "rot90", "rot270", "transverse"]
 
@@ -76,12 +55,7 @@ COLUMNS = [
 ]
 
 
-# --------------------------------------------------------------------------------------
-# Разбор пути и имени файла
-# --------------------------------------------------------------------------------------
 def parse_relpath(rel):
-    """root = верхняя папка (Dataset, final_dataset ...), split = train/test/val по любой
-    папке в пути (иначе 'all'), cls = папка с именем одного из 6 классов (иначе родительская)."""
     dirs = PurePosixPath(rel).parts[:-1]
     top = dirs[0] if dirs else "."
     root = "." if (not dirs or top.lower() in CLASS_ALIASES or top.lower() in SPLIT_ALIASES) else top
@@ -101,8 +75,7 @@ _DIGITS = re.compile(r"\d+")
 
 
 def name_template(filename):
-    """Шаблон имени: цифры -> '#', uuid/длинный hex -> метка. 'IMG_20230101_1234.jpg' -> 'IMG_#_#.jpg'.
-    По шаблонам видно, откуда фото: камера, скачано из поиска, кадры видео, аугментации..."""
+    """Шаблон имени: цифры -> '#'. 'IMG_20230101_1234.jpg' -> 'IMG_#_#.jpg'."""
     stem, ext = os.path.splitext(filename)
     t = _UUID.sub("<uuid>", stem)
     t = _LONGHEX.sub("<hex>", t)
@@ -110,9 +83,6 @@ def name_template(filename):
     return t + ext.lower()
 
 
-# --------------------------------------------------------------------------------------
-# Анализ одного файла (выполняется в отдельных процессах)
-# --------------------------------------------------------------------------------------
 def _dct_matrix(n):
     k = np.arange(n)[:, None]
     i = np.arange(n)[None, :]
@@ -121,19 +91,16 @@ def _dct_matrix(n):
 
 DCT = _dct_matrix(HASH_SIDE)
 _SIGNS = (-1.0) ** np.arange(HASH_LOW)
-SIGN_LR = np.tile(_SIGNS, (HASH_LOW, 1))   # (-1)^v, v - горизонтальная частота
-SIGN_TB = SIGN_LR.T                         # (-1)^u, u - вертикальная частота
+SIGN_LR = np.tile(_SIGNS, (HASH_LOW, 1))  # (-1)^v, v - горизонтальная частота
+SIGN_TB = SIGN_LR.T  # (-1)^u, u - вертикальная частота
 
 
 def phash_variants(rgb):
-    """pHash как в imagehash.phash, плюс хеши 7 отражённых/повёрнутых версий картинки.
-    Отражение слева-направо меняет знак DCT-коэффициентов с нечётной горизонтальной
-    частотой, транспонирование картинки транспонирует DCT. Поэтому все 8 вариантов
-    считаются из одного DCT, без повторного ресайза."""
+    """pHash картинки и 7 её отражений и поворотов."""
     gray = rgb.convert("L").resize((HASH_SIDE, HASH_SIDE), RESAMPLING.LANCZOS)
     low = (DCT @ np.asarray(gray, dtype=np.float64) @ DCT.T)[:HASH_LOW, :HASH_LOW]
     base = [low, low * SIGN_LR, low * SIGN_TB, low * SIGN_LR * SIGN_TB]
-    # порядок соответствует TRANSFORMS
+    # порядок как в TRANSFORMS
     variants = base[:4] + [base[0].T, base[1].T, base[2].T, base[3].T]
     out = []
     for m in variants:
@@ -143,7 +110,6 @@ def phash_variants(rgb):
 
 
 def to_rgb(img):
-    """Любой режим -> RGB. Прозрачность кладём на белый фон."""
     if img.mode in ("RGBA", "LA", "PA") or (img.mode == "P" and "transparency" in img.info):
         rgba = img.convert("RGBA")
         bg = Image.new("RGB", rgba.size, (255, 255, 255))
@@ -153,8 +119,7 @@ def to_rgb(img):
 
 
 def jpeg_quality(img):
-    """Грубая оценка качества JPEG (1..100) по таблице квантования яркости.
-    Веб-картинки обычно 70-90, камеры телефонов 90-98."""
+    """Грубая оценка качества JPEG (1..100) по таблице квантования."""
     q = getattr(img, "quantization", None)
     if not q or 0 not in q:
         return ""
@@ -179,7 +144,7 @@ def read_exif(img):
             if ex.get(tag):
                 out[key] = _clean(ex.get(tag))
         try:
-            original = ex.get_ifd(0x8769).get(0x9003)   # DateTimeOriginal
+            original = ex.get_ifd(0x8769).get(0x9003)  # DateTimeOriginal
             if original:
                 out["exif_datetime"] = _clean(original)
         except Exception:
@@ -190,8 +155,7 @@ def read_exif(img):
 
 
 def shooting_features(rgb):
-    """Признаки условий съёмки на картинке с длинной стороной FEAT_SIDE.
-    'Край' = полоса 10% по периметру кадра: обычно это фон, а не овощ."""
+    """Признаки съёмки. 'Край' - полоса 10% по периметру кадра."""
     w, h = rgb.size
     s = FEAT_SIDE / max(w, h)
     small = rgb.resize((max(1, round(w * s)), max(1, round(h * s))), RESAMPLING.BILINEAR)
@@ -210,7 +174,7 @@ def shooting_features(rgb):
     if hh >= 3 and ww >= 3:
         lap = (luma[:-2, 1:-1] + luma[2:, 1:-1] + luma[1:-1, :-2] + luma[1:-1, 2:]
                - 4.0 * luma[1:-1, 1:-1])
-        lap_var = float(lap.var())        # дисперсия лапласиана: мало = размыто
+        lap_var = float(lap.var())  # дисперсия лапласиана: мало = размыто
     else:
         lap_var = float("nan")
     feats = {
@@ -249,8 +213,8 @@ def analyze_file(task):
                 row["jpeg_q_est"] = jpeg_quality(im)
                 row.update(read_exif(im))
                 if im.format == "JPEG":
-                    im.draft("RGB", (2 * FEAT_SIDE, 2 * FEAT_SIDE))  # быстрое декодирование в уменьшенном виде
-                im.load()  # здесь падают обрезанные/битые файлы
+                    im.draft("RGB", (2 * FEAT_SIDE, 2 * FEAT_SIDE))
+                im.load()  # здесь падают битые файлы
                 rgb = to_rgb(ImageOps.exif_transpose(im))
         except Exception as e:
             msg = re.sub(r"\s*<_io\.BytesIO object at 0x[0-9a-fA-F]+>", "", str(e))
@@ -270,17 +234,13 @@ def analyze_file(task):
     return row
 
 
-# --------------------------------------------------------------------------------------
-# Дубликаты
-# --------------------------------------------------------------------------------------
 def bits_matrix(hex_hashes):
     raw = np.frombuffer(bytes.fromhex("".join(hex_hashes)), dtype=np.uint8)
     return np.unpackbits(raw).reshape(len(hex_hashes), 64).astype(np.float32)
 
 
 def min_hamming(query_bits, target_variants):
-    """query_bits (q,64), target_variants (8,t,64) -> (q,t) минимальное расстояние Хэмминга
-    по 8 вариантам цели и номер варианта (0 = без преобразования; при равенстве - он)."""
+    """Минимальное расстояние Хэмминга по 8 вариантам цели и номер варианта."""
     qs = query_bits.sum(axis=1)[:, None]
     best = arg = None
     for g in range(target_variants.shape[0]):
@@ -313,13 +273,12 @@ class UnionFind:
 
 
 def find_near_duplicates(rows, ok_idx, pair_max_dist, near_thresh):
-    """Ищет почти-дубликаты внутри каждого корня (Dataset/, final_dataset/ ...) и ближайших
-    соседей: в своём корне, в другом сплите того же корня, в другом корне."""
+    """Почти-дубликаты и ближайшие соседи: в своём корне, другом сплите, другом корне."""
     n = len(ok_idx)
     q_bits = bits_matrix([rows[i]["phash"] for i in ok_idx])
     variants = [q_bits] + [bits_matrix([rows[i]["phash_variants"].split()[g] for i in ok_idx])
                            for g in range(7)]
-    all_variants = np.stack(variants)                         # (8, n, 64)
+    all_variants = np.stack(variants)  # (8, n, 64)
     roots = np.array([rows[i]["root"] for i in ok_idx])
     splits = np.array([rows[i]["split"] for i in ok_idx])
     nn = {key: (np.full(n, -1), np.full(n, -1)) for key in ("same_root", "other_split", "other_root")}
@@ -337,13 +296,12 @@ def find_near_duplicates(rows, ok_idx, pair_max_dist, near_thresh):
             nq = len(q)
             rows_local = np.arange(st, st + nq)
             dist, var = min_hamming(q_bits[q], tv_in)
-            # ближайший сосед в своём корне (кроме себя)
             d_self = dist.copy()
             d_self[np.arange(nq), rows_local] = 999
             j = d_self.argmin(axis=1)
             nn["same_root"][0][q] = d_self[np.arange(nq), j]
             nn["same_root"][1][q] = members[j]
-            # ближайший сосед в другом сплите того же корня (утечка train/test)
+            # сосед в другом сплите: возможная утечка
             other_split = m_splits[None, :] != m_splits[st:st + nq][:, None]
             if other_split.any():
                 d_os = np.where(other_split, dist, 999)
@@ -352,12 +310,10 @@ def find_near_duplicates(rows, ok_idx, pair_max_dist, near_thresh):
                 has = d2 < 999
                 nn["other_split"][0][q[has]] = d2[has]
                 nn["other_split"][1][q[has]] = members[j2[has]]
-            # пары (каждая один раз: j > i)
             mask = (dist <= pair_max_dist) & (col[None, :] > rows_local[:, None])
             a, b = np.nonzero(mask)
             pa.append(members[st + a]); pb.append(members[b])
             pd.append(dist[a, b]); pg.append(var[a, b])
-            # ближайший сосед в другом корне (например, Dataset/ <-> final_dataset/)
             if tv_out is not None:
                 d3, _ = min_hamming(q_bits[q], tv_out)
                 j3 = d3.argmin(axis=1)
@@ -375,15 +331,12 @@ def find_near_duplicates(rows, ok_idx, pair_max_dist, near_thresh):
     comp = [uf.find(i) for i in range(n)]
     sizes = Counter(comp)
     ranking = sorted(sizes, key=lambda c: (-sizes[c], c))
-    cid = {c: k for k, c in enumerate(ranking)}             # 0 = самый большой кластер
+    cid = {c: k for k, c in enumerate(ranking)}  # 0 = самый большой кластер
     clusters = [cid[c] for c in comp]
     cluster_sizes = [sizes[c] for c in comp]
     return nn, (pa, pb, pd, pg), clusters, cluster_sizes
 
 
-# --------------------------------------------------------------------------------------
-# Контрольные листы
-# --------------------------------------------------------------------------------------
 _FONT = None
 
 
@@ -410,7 +363,6 @@ def put_label(draw, xy, text, fg=(255, 255, 0), bg=(0, 0, 0)):
 
 
 def load_thumb(base, rel, side):
-    """Превью с сохранением пропорций на тёмно-сером поле (так видно и форму кадра, и белый фон)."""
     canvas = Image.new("RGB", (side, side), (45, 45, 45))
     try:
         with Image.open(Path(base) / rel) as im:
@@ -478,7 +430,6 @@ def make_sheets(base, rows, ok_idx, pairs, clusters, args, out_dir):
     def save(img, name):
         img.save(sheets_dir / name, quality=82, optimize=True)
 
-    # 1) случайные уникальные (по MD5) фото каждого класса
     by_cls = defaultdict(dict)
     for i in ok_idx:
         by_cls[rows[i]["cls"]].setdefault(rows[i]["md5"], rows[i]["relpath"])
@@ -504,7 +455,6 @@ def make_sheets(base, rows, ok_idx, pairs, clusters, args, out_dir):
             save(sheet_of_pairs(base, [(a, b, c) for a, b, c in items], title), name)
 
     cap = lambda p, ra, rb: f"d={pd[p]} {TRANSFORMS[pg[p]]}\n{short(ra)} | {short(rb)}"
-    # 2) калибровка порога: по 4 случайные пары на каждом расстоянии (побайтовые копии не берём)
     sel = []
     for d in range(0, args.pair_max_dist + 1):
         cand = np.nonzero((pd == d) & not_same_md5)[0].tolist()
@@ -512,7 +462,6 @@ def make_sheets(base, rows, ok_idx, pairs, clusters, args, out_dir):
     pair_items(sel, "pairs_by_distance.jpg",
                f"pHash distance calibration: 4 random pairs per distance 0..{args.pair_max_dist} (byte-identical skipped)",
                cap)
-    # 3) пары между сплитами одного корня (возможная утечка train/test)
     split_a = np.array([rows[ok_idx[a]]["split"] for a in pa])
     split_b = np.array([rows[ok_idx[b]]["split"] for b in pb])
     cand = np.nonzero((split_a != split_b) & (pd <= args.near_thresh))[0].tolist()
@@ -520,21 +469,19 @@ def make_sheets(base, rows, ok_idx, pairs, clusters, args, out_dir):
     pair_items(sel, "pairs_cross_split.jpg",
                f"Cross-split pairs with d<={args.near_thresh}: {len(sel)} random of {len(cand)}",
                cap)
-    # 4) пары из разных классов (шум в разметке или ложные срабатывания хеша)
     cls_a = np.array([rows[ok_idx[a]]["cls"] for a in pa])
     cls_b = np.array([rows[ok_idx[b]]["cls"] for b in pb])
-    cand = np.nonzero(cls_a != cls_b)[0].tolist()[:32]          # уже отсортированы по расстоянию
+    cand = np.nonzero(cls_a != cls_b)[0].tolist()[:32]
     pair_items(cand, "pairs_cross_class.jpg",
                f"Closest cross-class pairs (d<={args.pair_max_dist}): {len(cand)} shown",
                cap)
-    # 5) крупнейшие кластеры почти-дубликатов
     members = defaultdict(list)
     for pos, c in enumerate(clusters):
         members[c].append(pos)
     big, seen = [], set()
     for c in sorted(members, key=lambda c: (-len(members[c]), c)):
         key = frozenset(rows[ok_idx[pos]]["md5"] for pos in members[c])
-        if len(members[c]) >= 3 and key not in seen:   # тот же кластер в другом корне не повторяем
+        if len(members[c]) >= 3 and key not in seen:
             big.append(c)
             seen.add(key)
         if len(big) == 6:
@@ -561,9 +508,6 @@ def make_sheets(base, rows, ok_idx, pairs, clusters, args, out_dir):
     return index_rows
 
 
-# --------------------------------------------------------------------------------------
-# Сводка
-# --------------------------------------------------------------------------------------
 def pct(a, b):
     return f"{100.0 * a / b:.1f}%" if b else "-"
 
@@ -586,7 +530,6 @@ def build_summary(rows, ok_idx, pairs, args, base_name, elapsed):
     L.append(f"Файлов: {len(rows)} | открылись как изображения: {len(ok_rows)} | не открылись: {n_err}")
     S["files"], S["ok"], S["errors"] = len(rows), len(ok_rows), n_err
 
-    # --- количество по корню/сплиту/классу
     groups = sorted({(r["root"], r["split"]) for r in ok_rows})
     classes = sorted({r["cls"] for r in ok_rows}, key=lambda c: (c not in CLASSES, c))
     cnt = Counter((r["root"], r["split"], r["cls"]) for r in ok_rows)
@@ -602,7 +545,6 @@ def build_summary(rows, ok_idx, pairs, args, base_name, elapsed):
     if unknown_cls:
         L.append(f"! Папки, не совпавшие с 6 классами ТЗ: {unknown_cls[:10]}")
 
-    # --- уникальные изображения (по MD5) для статистик, чтобы копии не считались дважды
     uniq = {}
     for r in ok_rows:
         uniq.setdefault(r["md5"], r)
@@ -675,7 +617,6 @@ def build_summary(rows, ok_idx, pairs, args, base_name, elapsed):
                  f"{med('border_luma_mean'):10.0f}{med('border_white_frac'):11.2f}{med('border_dark_frac'):11.2f}"
                  f"{med('lap_var'):12.0f}")
 
-    # --- точные дубликаты
     L.append("\n--- Точные дубликаты (одинаковый MD5) ---")
     by_md5 = defaultdict(list)
     for r in ok_rows:
@@ -705,7 +646,6 @@ def build_summary(rows, ok_idx, pairs, args, base_name, elapsed):
             L.append(f"  {root}: {len(rs)} изобр.; побайтовая копия в другом корне: {len(twin)} ({pct(len(twin), len(rs))}), "
                      f"из них без копии того же класса: {mism}; pHash-близнец (d<=2) в другом корне: {near} ({pct(near, len(rs))})")
 
-    # --- почти-дубликаты
     pa, pb, pd, pg = pairs
     L.append(f"\n--- Почти-дубликаты (pHash, отражения/повороты учтены), порог d <= {args.near_thresh} ---")
     S["near"] = {}
@@ -729,7 +669,6 @@ def build_summary(rows, ok_idx, pairs, args, base_name, elapsed):
         S["near"][root] = {"pairs": len(sel), "cross_class": cc, "cross_split": cs, "clusters": ncl,
                            "images_in_clusters": len(in_cl), "largest": biggest}
 
-    # --- утечка между сплитами
     L.append("\n--- Утечка между сплитами (внутри одного корня) ---")
     S["leak"] = {}
     for root in roots:
@@ -744,7 +683,6 @@ def build_summary(rows, ok_idx, pairs, args, base_name, elapsed):
                      f"почти-дубликат (d<={args.near_thresh}) в другом сплите: {near} ({pct(near, len(rs))})")
             S["leak"][f"{root}/{s}"] = {"n": len(rs), "exact": exact, "near": near}
 
-    # --- ошибки
     errs = [r for r in rows if not r["ok"]]
     if errs:
         L.append("\n--- Файлы, которые не открылись ---")
@@ -758,9 +696,7 @@ def build_summary(rows, ok_idx, pairs, args, base_name, elapsed):
     return "\n".join(L) + "\n", S
 
 
-# --------------------------------------------------------------------------------------
 def descend_wrappers(path):
-    """Если в папке ровно одна подпапка (обёртка архива), спускаемся в неё."""
     while True:
         kids = [c for c in path.iterdir() if not c.name.startswith(".") and c.name != "__MACOSX"]
         if (len(kids) == 1 and kids[0].is_dir() and kids[0].name.lower() not in CLASS_ALIASES
@@ -828,7 +764,6 @@ def main():
         r["ext"] = PurePosixPath(r["relpath"]).suffix.lower()
         r["name_template"] = name_template(r["filename"])
 
-    # MD5: копии внутри своего корня и в других корнях
     by_md5 = defaultdict(list)
     for r in rows:
         if r.get("bytes"):
